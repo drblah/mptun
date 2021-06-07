@@ -1,14 +1,13 @@
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::os::unix::io::AsRawFd;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_tun::result::Result;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio_tun::TunBuilder;
 use serde::{Serialize, Deserialize};
 use bincode;
-use socket2::{Domain, SockAddr, Socket, Type};
-use tokio::net::UdpSocket;
+use socket2::{Domain, Socket, Type};
+use tokio::{net::UdpSocket, task};
 use std::net::UdpSocket as std_udp;
-use std::mem;
+use std::{sync::Arc};
 
 /*
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -27,7 +26,7 @@ struct Packet {
     bytes: Vec<u8>
 }
 
-fn make_socket(interface: &str) -> UdpSocket {
+fn make_socket(interface: &str, local_address: &str) -> UdpSocket {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, None).unwrap();
 
     if let Err(err) = socket.bind_device(Some(interface.as_bytes())) {
@@ -38,17 +37,63 @@ fn make_socket(interface: &str) -> UdpSocket {
         }
     }
 
-    let address = socket.local_addr().unwrap();
+
+    //let address = socket.local_addr().unwrap();
+
+    let address: SocketAddrV4 = local_address.parse().unwrap();
     socket.bind(&address.into()).unwrap();
 
     let std_udp: std_udp = socket.into();
-    std_udp.set_nonblocking(true);
+    std_udp.set_nonblocking(true).unwrap();
 
     let udp_socket: UdpSocket = UdpSocket::from_std(std_udp).unwrap();
 
     udp_socket
 }
 
+async fn tun_to_udp(udp_sender: Arc<UdpSocket>, mut tun_reader: ReadHalf<tokio_tun::Tun> ) {
+    let mut buf = [0u8; 1400];
+    let n = tun_reader.read(&mut buf).await.unwrap();
+
+    //println!("reading {} bytes: {:?}", n, &buf[..n]);
+
+    let pkt = Packet{
+        seq: 0,
+        bytes: buf[..n].to_vec()
+    };
+
+    let encoded = bincode::serialize(&pkt).unwrap();
+
+    //println!("Encoded length: {}", encoded.len());
+
+    udp_sender.send_to(&encoded, "10.0.0.100:5202").await.unwrap();
+}
+
+
+async fn udp_to_tun(udp_receiver: Arc<UdpSocket>, mut tun_sender: WriteHalf<tokio_tun::Tun>) {
+    let mut sequence_nr = 0 as usize;
+
+    let mut buf = [0; 1500];
+
+    let (len, _addr) = udp_receiver.recv_from(&mut buf).await.unwrap();
+    println!("UDP: Received {} bytes", len);
+
+
+    let decoded: Packet = match bincode::deserialize(&buf[..len]) {
+        Ok(result) => {
+            result
+        },
+        Err(_) => {
+            // If we receive garbage, simply throw it away and continue.
+            return
+        }
+    };
+
+    if decoded.seq > sequence_nr {
+        sequence_nr = decoded.seq;
+        tun_sender.write(&decoded.bytes).await.unwrap();
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -85,14 +130,23 @@ async fn main() {
     println!("ping 10.1.0.2 to test");
     println!("---------------------");
 
-    let (mut reader, mut _writer) = tokio::io::split(tun);
+    let (mut reader, mut writer) = tokio::io::split(tun);
 
-    let soc = make_socket("enp5s0");
 
+    let sock = make_socket("enp5s0", "10.0.0.111:40500");
+    let receiver = Arc::new(sock);
+    let sender = receiver.clone();
+
+    udp_to_tun(receiver, writer).await;
+
+    tun_to_udp(sender, reader).await;
+
+
+    /*
     let _ = tokio::join!(
       tokio::task::spawn(async move {
             loop {
-                let mut buf = [0u8; 1024];
+                let mut buf = [0u8; 1400];
 
                 let n = reader.read(&mut buf).await.unwrap();
 
@@ -100,18 +154,18 @@ async fn main() {
 
                 let pkt = Packet{
                     seq: 0,
-                    bytes: buf.to_vec()
+                    bytes: buf[..n].to_vec()
                 };
 
                 let encoded = bincode::serialize(&pkt).unwrap();
 
                 println!("Encoded length: {}", encoded.len());
 
-                soc.send_to(&encoded, "10.0.0.100:5202").await;
+                sender.send_to(&encoded, "10.0.0.100:5202").await.unwrap();
             }
         })
     );
-
+    */
 
     /*
     loop {
