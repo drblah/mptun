@@ -9,7 +9,7 @@ use tokio::{net::UdpSocket, task};
 use std::net::UdpSocket as std_udp;
 use std::{sync::Arc};
 use clap::{App, load_yaml, ArgMatches};
-use std::process::exit;
+
 
 /*
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -161,7 +161,7 @@ fn prepare_settings(matches: ArgMatches) -> Settings {
     }
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
 
     let yaml = load_yaml!("cli.yaml");
