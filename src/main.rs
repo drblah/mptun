@@ -53,7 +53,7 @@ fn make_socket(interface: &str, local_address: Ipv4Addr, local_port: u16) -> Udp
     udp_socket
 }
 
-async fn tun_to_udp(udp_sender: &Arc<UdpSocket>, tun_reader: &mut ReadHalf<tokio_tun::Tun>, target_address: Ipv4Addr, target_port: u16 ) {
+async fn tun_to_udp(udp_sender: Arc<UdpSocket>, mut tun_reader: ReadHalf<tokio_tun::Tun>, target_address: Ipv4Addr, target_port: u16 ) {
 
     let mut seq: usize = 0;
     let target = SocketAddrV4::new(target_address, target_port);
@@ -79,7 +79,7 @@ async fn tun_to_udp(udp_sender: &Arc<UdpSocket>, tun_reader: &mut ReadHalf<tokio
 }
 
 
-async fn udp_to_tun(udp_receiver: &Arc<UdpSocket>, tun_sender: &mut WriteHalf<tokio_tun::Tun>) {
+async fn udp_to_tun(udp_receiver: Arc<UdpSocket>, mut tun_sender: WriteHalf<tokio_tun::Tun>) {
     let mut sequence_nr = 0 as usize;
 
     loop {
@@ -161,7 +161,7 @@ fn prepare_settings(matches: ArgMatches) -> Settings {
     }
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() {
 
     let yaml = load_yaml!("cli.yaml");
@@ -198,7 +198,7 @@ async fn main() {
         tun.netmask().unwrap(),
     );
 
-    let (mut reader, mut writer) = tokio::io::split(tun);
+    let (reader, writer) = tokio::io::split(tun);
 
 
     let sock = make_socket(settings.udp_iface.as_str(), settings.udp_listen_addr, settings.udp_listen_port);
@@ -208,11 +208,11 @@ async fn main() {
     let mut handles: Vec<task::JoinHandle<_>> = Vec::new();
 
     handles.push(tokio::spawn(async move {
-        tun_to_udp(&sender, &mut reader, settings.remote_addr, settings.remote_port).await
+        tun_to_udp(sender, reader, settings.remote_addr, settings.remote_port).await
     }));
 
     handles.push(tokio::spawn(async move {
-        udp_to_tun(&receiver, &mut writer).await
+        udp_to_tun(receiver, writer).await
     }));
 
 
