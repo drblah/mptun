@@ -10,6 +10,8 @@ use std::net::UdpSocket as std_udp;
 use std::{sync::Arc};
 use clap::{App, load_yaml};
 use serde_json;
+use tokio::task::JoinHandle;
+use std::future::Future;
 
 
 /*
@@ -55,6 +57,7 @@ fn make_socket(interface: &str, local_address: Ipv4Addr, local_port: u16) -> Udp
 }
 
 async fn read_tun(mut tun_reader: ReadHalf<tokio_tun::Tun>, chan_sender: tokio::sync::broadcast::Sender<Packet>) {
+    println!("Started [read_tun task]");
     let mut seq: usize = 0;
 
     loop {
@@ -72,6 +75,7 @@ async fn read_tun(mut tun_reader: ReadHalf<tokio_tun::Tun>, chan_sender: tokio::
 }
 
 async fn send_tun(mut tun_sender: WriteHalf<tokio_tun::Tun>, mut chan_receiver: tokio::sync::mpsc::UnboundedReceiver::<Packet>) {
+    println!("Started [send_tun task]");
     let mut seq: usize = 0;
     loop {
         let packet = chan_receiver.recv().await.unwrap();
@@ -84,6 +88,7 @@ async fn send_tun(mut tun_sender: WriteHalf<tokio_tun::Tun>, mut chan_receiver: 
 }
 
 async fn send_udp(socket: Arc<UdpSocket>, target: SocketAddrV4, mut chan_receiver: tokio::sync::broadcast::Receiver<Packet>) {
+    println!("Started [send_udp task]");
     loop {
         let pkt = chan_receiver.recv().await.unwrap();
 
@@ -93,6 +98,7 @@ async fn send_udp(socket: Arc<UdpSocket>, target: SocketAddrV4, mut chan_receive
 }
 
 async fn recv_udp(socket: Arc<UdpSocket>, chan_sender: tokio::sync::mpsc::UnboundedSender::<Packet>) {
+    println!("Started [recv_udp task]");
     loop {
         let mut buf = [0; 1500];
         let (len, _addr) = socket.recv_from(&mut buf).await.unwrap();
@@ -176,8 +182,7 @@ async fn main() {
 
 
     let mut sockets: Vec<Arc<UdpSocket>> = Vec::new();
-
-
+    let mut tasks: Vec<JoinHandle<_>> = Vec::new();
 
     for dev in settings.send_devices {
         let socket = make_socket(dev.udp_iface.as_str(), dev.udp_listen_addr, dev.udp_listen_port);
@@ -189,25 +194,27 @@ async fn main() {
         let soc_recv = soc_send.clone();
         let target = SocketAddrV4::new(settings.remote_addr, settings.remote_port);
         let rx = tx.subscribe();
-        task::spawn_blocking(move || {
-            send_udp(soc_send, target, rx)
-        });
+        tasks.push(task::spawn(async move {
+            send_udp(soc_send, target, rx).await
+        }));
 
         let tx = inbound_tx.clone();
-        task::spawn_blocking(move || {
-            recv_udp(soc_recv, tx)
-        });
+        tasks.push(task::spawn(async move {
+            recv_udp(soc_recv, tx).await
+        }));
     }
 
-    task::spawn_blocking(|| {
-        read_tun(tun_reader, tx)
-    });
+    tasks.push(task::spawn(async move {
+        read_tun(tun_reader, tx).await
+    }));
 
-    task::spawn_blocking(|| {
-        send_tun(tun_writer, inbound_rx)
-    });
+    tasks.push(task::spawn(async move {
+        send_tun(tun_writer, inbound_rx).await
+    }));
 
-
+    for task in tasks {
+        task.await.unwrap();
+    }
 
     /*
     let sock = make_socket(settings.udp_iface.as_str(), settings.udp_listen_addr, settings.udp_listen_port);
