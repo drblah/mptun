@@ -8,7 +8,7 @@ use socket2::{Domain, Socket, Type};
 use tokio::{net::UdpSocket, task};
 use std::net::UdpSocket as std_udp;
 use std::{sync::Arc};
-use clap::{App, load_yaml, ArgMatches};
+use clap::{App, load_yaml};
 use serde_json;
 
 
@@ -71,52 +71,31 @@ async fn read_tun(mut tun_reader: ReadHalf<tokio_tun::Tun>, chan_sender: tokio::
     }
 }
 
-async fn send_udp(socket: UdpSocket, target: SocketAddrV4, mut chan_receiver: tokio::sync::broadcast::Receiver<Packet>) {
+async fn send_tun(mut tun_sender: WriteHalf<tokio_tun::Tun>, mut chan_receiver: tokio::sync::mpsc::UnboundedReceiver::<Packet>) {
+    let mut seq: usize = 0;
+    loop {
+        let packet = chan_receiver.recv().await.unwrap();
 
+        if packet.seq > seq {
+            seq = packet.seq;
+            tun_sender.write(&packet.bytes).await.unwrap();
+        }
+    }
+}
+
+async fn send_udp(socket: Arc<UdpSocket>, target: SocketAddrV4, mut chan_receiver: tokio::sync::broadcast::Receiver<Packet>) {
     loop {
         let pkt = chan_receiver.recv().await.unwrap();
 
         let encoded = bincode::serialize(&pkt).unwrap();
         socket.send_to(&encoded, target).await.unwrap();
     }
-
-
 }
 
-async fn tun_to_udp(udp_sender: Arc<UdpSocket>, mut tun_reader: ReadHalf<tokio_tun::Tun>, target_address: Ipv4Addr, target_port: u16 ) {
-
-    let mut seq: usize = 0;
-    let target = SocketAddrV4::new(target_address, target_port);
-    loop {
-        let mut buf = [0u8; 1400];
-        let n = tun_reader.read(&mut buf).await.unwrap();
-
-        //println!("reading {} bytes: {:?}", n, &buf[..n]);
-
-        let pkt = Packet {
-            seq: seq,
-            bytes: buf[..n].to_vec()
-        };
-
-        seq = seq + 1;
-
-        let encoded = bincode::serialize(&pkt).unwrap();
-
-        //println!("Encoded length: {}", encoded.len());
-
-        udp_sender.send_to(&encoded, target).await.unwrap();
-    }
-}
-
-
-async fn udp_to_tun(udp_receiver: Arc<UdpSocket>, mut tun_sender: WriteHalf<tokio_tun::Tun>) {
-    let mut sequence_nr = 0 as usize;
-
+async fn recv_udp(socket: Arc<UdpSocket>, chan_sender: tokio::sync::mpsc::UnboundedSender::<Packet>) {
     loop {
         let mut buf = [0; 1500];
-
-        let (len, _addr) = udp_receiver.recv_from(&mut buf).await.unwrap();
-        //println!("UDP: Received {} bytes", len);
+        let (len, _addr) = socket.recv_from(&mut buf).await.unwrap();
 
         let decoded: Packet = match bincode::deserialize(&buf[..len]) {
             Ok(result) => {
@@ -129,65 +108,7 @@ async fn udp_to_tun(udp_receiver: Arc<UdpSocket>, mut tun_sender: WriteHalf<toki
             }
         };
 
-        //println!("Parsed: {:?}", decoded);
-
-        if decoded.seq > sequence_nr {
-            //println!("Writing the received bytes to tun!");
-            sequence_nr = decoded.seq;
-            tun_sender.write(&decoded.bytes).await.unwrap();
-        }
-    }
-}
-
-#[derive(Debug)]
-struct Settings {
-    tun_ip: Ipv4Addr,
-    udp_iface: String,
-    udp_listen_addr: Ipv4Addr,
-    udp_listen_port: u16,
-    remote_addr: Ipv4Addr,
-    remote_port: u16
-}
-
-fn prepare_settings(matches: ArgMatches) -> Settings {
-
-    let tun_ip: Ipv4Addr = match matches.value_of("tun-ip") {
-        Some(value) => value.parse().unwrap(),
-        _ => panic!("tun-ip is not set.")
-    };
-
-    let udp_iface = match matches.value_of("udp-iface") {
-        Some(value) => value.to_string(),
-        _ => panic!("udp-iface not set")
-    };
-
-    let udp_listen_addr: Ipv4Addr = match matches.value_of("udp-listen-addr") {
-        Some(value) => value.parse().unwrap(),
-        _ => panic!("udp-listen-port not set")
-    };
-
-    let udp_listen_port: u16 = match matches.value_of("udp-listen-port") {
-        Some(value) => value.parse().unwrap(),
-        _ => panic!("udp-listen-port not set")
-    };
-
-    let remote_addr: Ipv4Addr = match matches.value_of("remote-addr") {
-        Some(value) => value.parse().unwrap(),
-        _ => panic!("remote-addr not set")
-    };
-
-    let remote_port: u16 = match matches.value_of("remote-port") {
-        Some(value) => value.parse().unwrap(),
-        _ => panic!("remote-port not set")
-    };
-
-    Settings{
-        tun_ip,
-        udp_iface,
-        udp_listen_addr,
-        udp_listen_port,
-        remote_addr,
-        remote_port
+        chan_sender.send(decoded).unwrap();
     }
 }
 
@@ -250,19 +171,38 @@ async fn main() {
 
     let (tun_reader, tun_writer) = tokio::io::split(tun);
 
-    let (tx, rx) = tokio::sync::broadcast::channel::<Packet>(10);
+    let (tx, _) = tokio::sync::broadcast::channel::<Packet>(10);
+    let (inbound_tx, inbound_rx) = tokio::sync::mpsc::unbounded_channel::<Packet>();
+
+
+    let mut sockets: Vec<Arc<UdpSocket>> = Vec::new();
 
     for dev in settings.send_devices {
         let socket = make_socket(dev.udp_iface.as_str(), dev.udp_listen_addr, dev.udp_listen_port);
+        sockets.push(Arc::new(socket));
+    }
+
+    for socket in sockets {
+        let soc_send = socket.clone();
+        let soc_recv = soc_send.clone();
         let target = SocketAddrV4::new(settings.remote_addr, settings.remote_port);
         let rx = tx.subscribe();
         task::spawn_blocking(move || {
-            send_udp(socket, target, rx)
+            send_udp(soc_send, target, rx)
+        });
+
+        let tx = inbound_tx.clone();
+        task::spawn_blocking(move || {
+            recv_udp(soc_recv, tx)
         });
     }
 
     task::spawn_blocking(|| {
         read_tun(tun_reader, tx)
+    });
+
+    task::spawn_blocking(|| {
+        send_tun(tun_writer, inbound_rx)
     });
 
 
