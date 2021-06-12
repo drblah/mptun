@@ -9,6 +9,7 @@ use tokio::{net::UdpSocket, task};
 use std::net::UdpSocket as std_udp;
 use std::{sync::Arc};
 use clap::{App, load_yaml, ArgMatches};
+use serde_json;
 
 
 /*
@@ -22,7 +23,7 @@ struct Packet<const N: usize> {
 }
 */
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 struct Packet {
     seq: usize,
     bytes: Vec<u8>
@@ -51,6 +52,35 @@ fn make_socket(interface: &str, local_address: Ipv4Addr, local_port: u16) -> Udp
     let udp_socket: UdpSocket = UdpSocket::from_std(std_udp).unwrap();
 
     udp_socket
+}
+
+async fn read_tun(mut tun_reader: ReadHalf<tokio_tun::Tun>, chan_sender: tokio::sync::broadcast::Sender<Packet>) {
+    let mut seq: usize = 0;
+
+    loop {
+        let mut buf = [0u8; 1400];
+        let n = tun_reader.read(&mut buf).await.unwrap();
+
+        let pkt = Packet{
+            seq,
+            bytes: buf[..n].to_vec()
+        };
+        seq = seq + 1;
+
+        chan_sender.send(pkt).unwrap();
+    }
+}
+
+async fn send_udp(socket: UdpSocket, target: SocketAddrV4, mut chan_receiver: tokio::sync::broadcast::Receiver<Packet>) {
+
+    loop {
+        let pkt = chan_receiver.recv().await.unwrap();
+
+        let encoded = bincode::serialize(&pkt).unwrap();
+        socket.send_to(&encoded, target).await.unwrap();
+    }
+
+
 }
 
 async fn tun_to_udp(udp_sender: Arc<UdpSocket>, mut tun_reader: ReadHalf<tokio_tun::Tun>, target_address: Ipv4Addr, target_port: u16 ) {
@@ -161,13 +191,33 @@ fn prepare_settings(matches: ArgMatches) -> Settings {
     }
 }
 
+#[derive(Deserialize, Debug)]
+struct SendDevice {
+    udp_iface: String,
+    udp_listen_addr: Ipv4Addr,
+    udp_listen_port: u16
+}
+
+#[derive(Deserialize, Debug)]
+struct SettingsFile {
+    tun_ip: Ipv4Addr,
+    send_devices: Vec<SendDevice>,
+    remote_addr: Ipv4Addr,
+    remote_port: u16
+}
+
 #[tokio::main]
 async fn main() {
 
     let yaml = load_yaml!("cli.yaml");
     let matches = App::from(yaml).get_matches();
 
-    let settings = prepare_settings(matches);
+    let conf_path = match matches.value_of("config") {
+        Some(value) => value,
+        _ => panic!("Failed to get config file path. Does it point to a valid path?")
+    };
+
+    let settings: SettingsFile = serde_json::from_str(conf_path).unwrap();
 
     println!("Using settings: {:?}", settings);
 
@@ -198,9 +248,26 @@ async fn main() {
         tun.netmask().unwrap(),
     );
 
-    let (reader, writer) = tokio::io::split(tun);
+    let (tun_reader, tun_writer) = tokio::io::split(tun);
+
+    let (tx, rx) = tokio::sync::broadcast::channel::<Packet>(10);
+
+    for dev in settings.send_devices {
+        let socket = make_socket(dev.udp_iface.as_str(), dev.udp_listen_addr, dev.udp_listen_port);
+        let target = SocketAddrV4::new(settings.remote_addr, settings.remote_port);
+        let rx = tx.subscribe();
+        task::spawn_blocking(move || {
+            send_udp(socket, target, rx)
+        });
+    }
+
+    task::spawn_blocking(|| {
+        read_tun(tun_reader, tx)
+    });
 
 
+
+    /*
     let sock = make_socket(settings.udp_iface.as_str(), settings.udp_listen_addr, settings.udp_listen_port);
     let receiver = Arc::new(sock);
     let sender = receiver.clone();
@@ -219,5 +286,7 @@ async fn main() {
     for h in handles {
         h.await.unwrap();
     }
+
+     */
     
 }
