@@ -3,44 +3,9 @@ version: "0.1"
 author: drblah
 about: Creates a multi path VPN tunnel for more reliable networking over unreliable medium like cellular.
 args:
-  - tun-ip:
-      long: tun-ip
-      value_name: TUNIP
-      about: Sets the local TUN IP address
-      takes_value: true
-      required: true
-
-  - udp-iface:
-      long: udp-iface
-      value_name: INTERFACE
-      about: Sets the interface to send and receive on
-      takes_value: true
-      required: true
-
-  - udp-listen-addr:
-        long: udp-listen-addr
-        value_name: IPADDR
-        about: Sets the UDP address to listen on
-        takes_value: true
-        required: true
-
-  - udp-listen-port:
-      long: udp-listen-port
-      value_name: PORT
-      about: Sets the UDP port to listen on
-      takes_value: true
-      required: true
-
-  - remote-addr:
-      long: remote-addr
-      value_name: IPADDR
-      about: Sets the IP address to connect to on the remote side
-      takes_value: true
-      required: true
-
-  - remote-port:
-      long: remote-port
-      value_name: PORT
-      about: Sets the UDP port to connect to on the remote side
+  - config:
+      long: config
+      value_name: CONFIGFILE
+      about: Sets the path to the configuration file
       takes_value: true
       required: true

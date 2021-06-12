@@ -138,7 +138,7 @@ async fn main() {
         _ => panic!("Failed to get config file path. Does it point to a valid path?")
     };
 
-    let settings: SettingsFile = serde_json::from_str(conf_path).unwrap();
+    let settings: SettingsFile = serde_json::from_str(std::fs::read_to_string(conf_path).unwrap().as_str()).unwrap();
 
     println!("Using settings: {:?}", settings);
 
@@ -176,6 +176,8 @@ async fn main() {
 
 
     let mut sockets: Vec<Arc<UdpSocket>> = Vec::new();
+
+
 
     for dev in settings.send_devices {
         let socket = make_socket(dev.udp_iface.as_str(), dev.udp_listen_addr, dev.udp_listen_port);
