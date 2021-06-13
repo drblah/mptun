@@ -1,1 +1,0 @@
-./mptun --remote-addr "172.16.200.2" --remote-port 10001 --tun-ip "10.12.0.1" --udp-iface "v0p0" --udp-listen-addr "172.16.200.1" --udp-listen-port 10000
