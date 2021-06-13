@@ -28,6 +28,7 @@ struct Packet<const N: usize> {
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 struct Packet {
     seq: usize,
+    #[serde(with = "serde_bytes")]
     bytes: Vec<u8>
 }
 
@@ -177,7 +178,7 @@ async fn main() {
 
     let (tun_reader, tun_writer) = tokio::io::split(tun);
 
-    let (tx, _) = tokio::sync::broadcast::channel::<Packet>(10);
+    let (tx, _) = tokio::sync::broadcast::channel::<Packet>(100);
     let (inbound_tx, inbound_rx) = tokio::sync::mpsc::unbounded_channel::<Packet>();
 
 
