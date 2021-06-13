@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -e
+
 ##
 # Based on https://ops.tips/blog/using-network-namespaces-and-bridge-to-isolate-servers/
 ##

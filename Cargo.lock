@@ -610,6 +610,8 @@ dependencies = [
 [[package]]
 name = "tokio-tun"
 version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b069390dad41402d7e14ac448e6971742930425cfe0c04b16d3cd7ce4feab9b"
 dependencies = [
  "futures",
  "libc",
