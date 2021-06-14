@@ -11,19 +11,6 @@ use std::{sync::Arc};
 use clap::{App, load_yaml};
 use serde_json;
 use tokio::task::JoinHandle;
-use std::future::Future;
-
-
-/*
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
-struct Packet<const N: usize> {
-    seq: usize,
-    part: usize,
-    length: usize,
-    #[serde(with = "serde_arrays")]
-    bytes: [u8; N]
-}
-*/
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 struct Packet {
@@ -91,7 +78,15 @@ async fn send_tun(mut tun_sender: WriteHalf<tokio_tun::Tun>, mut chan_receiver: 
 async fn send_udp(socket: Arc<UdpSocket>, target: SocketAddrV4, mut chan_receiver: tokio::sync::broadcast::Receiver<Packet>) {
     println!("Started [send_udp task]");
     loop {
-        let pkt = chan_receiver.recv().await.unwrap();
+        let pkt: Packet = match chan_receiver.recv().await {
+            Ok(pkt) => pkt,
+            Err(e) => {
+                println!("send_udp task channel overrun. Dropping packets!: {}", e);
+                continue
+            }
+        };
+
+        //let pkt = chan_receiver.recv().await.unwrap();
 
         let encoded = bincode::serialize(&pkt).unwrap();
         socket.send_to(&encoded, target).await.unwrap();
@@ -178,7 +173,7 @@ async fn main() {
 
     let (tun_reader, tun_writer) = tokio::io::split(tun);
 
-    let (tx, _) = tokio::sync::broadcast::channel::<Packet>(100);
+    let (tx, _) = tokio::sync::broadcast::channel::<Packet>(200);
     let (inbound_tx, inbound_rx) = tokio::sync::mpsc::unbounded_channel::<Packet>();
 
 
