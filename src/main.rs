@@ -30,9 +30,6 @@ fn make_socket(interface: &str, local_address: Ipv4Addr, local_port: u16) -> Udp
         }
     }
 
-
-    //let address = socket.local_addr().unwrap();
-
     let address = SocketAddrV4::new(local_address, local_port);
     socket.bind(&address.into()).unwrap();
 
