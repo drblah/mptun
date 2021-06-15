@@ -83,8 +83,6 @@ async fn send_udp(socket: Arc<UdpSocket>, target: SocketAddrV4, mut chan_receive
             }
         };
 
-        //let pkt = chan_receiver.recv().await.unwrap();
-
         let encoded = bincode::serialize(&pkt).unwrap();
         socket.send_to(&encoded, target).await.unwrap();
     }
@@ -137,7 +135,11 @@ async fn main() {
         _ => panic!("Failed to get config file path. Does it point to a valid path?")
     };
 
-    let settings: SettingsFile = serde_json::from_str(std::fs::read_to_string(conf_path).unwrap().as_str()).unwrap();
+    let settings: SettingsFile = serde_json::from_str(
+        std::fs::read_to_string(conf_path)
+            .unwrap()
+            .as_str()
+    ).unwrap();
 
     println!("Using settings: {:?}", settings);
 
