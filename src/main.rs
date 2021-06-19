@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddrV4, SocketAddr};
 use std::os::unix::io::AsRawFd;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio_tun::TunBuilder;
@@ -11,13 +11,20 @@ use std::{sync::Arc};
 use clap::{App, load_yaml};
 use serde_json;
 use tokio::task::JoinHandle;
+use uuid::Uuid;
+use std::collections::HashMap;
+use std::sync::RwLock;
+
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 struct Packet {
     seq: usize,
+    uuid: Uuid,
     #[serde(with = "serde_bytes")]
     bytes: Vec<u8>
 }
+
+
 
 fn make_socket(interface: &str, local_address: Ipv4Addr, local_port: u16) -> UdpSocket {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, None).unwrap();
@@ -41,7 +48,7 @@ fn make_socket(interface: &str, local_address: Ipv4Addr, local_port: u16) -> Udp
     udp_socket
 }
 
-async fn read_tun(mut tun_reader: ReadHalf<tokio_tun::Tun>, chan_sender: tokio::sync::broadcast::Sender<Packet>) {
+async fn read_tun(mut tun_reader: ReadHalf<tokio_tun::Tun>, chan_sender: tokio::sync::broadcast::Sender<Packet>, my_uuid: Uuid) {
     println!("Started [read_tun task]");
     let mut seq: usize = 0;
 
@@ -51,9 +58,12 @@ async fn read_tun(mut tun_reader: ReadHalf<tokio_tun::Tun>, chan_sender: tokio::
 
         let pkt = Packet{
             seq,
+            uuid: my_uuid,
             bytes: buf[..n].to_vec()
         };
         seq = seq + 1;
+
+        println!("Tunnel bytes: {:?}", pkt.bytes);
 
         chan_sender.send(pkt).unwrap();
     }
@@ -72,7 +82,7 @@ async fn send_tun(mut tun_sender: WriteHalf<tokio_tun::Tun>, mut chan_receiver: 
     }
 }
 
-async fn send_udp(socket: Arc<UdpSocket>, target: SocketAddrV4, mut chan_receiver: tokio::sync::broadcast::Receiver<Packet>) {
+async fn send_udp(socket: Arc<UdpSocket>, target: SocketAddrV4, mut chan_receiver: tokio::sync::broadcast::Receiver<Packet>, client_list: Arc<RwLock<HashMap<Uuid, Vec<SocketAddr>>>>) {
     println!("Started [send_udp task]");
     loop {
         let pkt: Packet = match chan_receiver.recv().await {
@@ -84,15 +94,26 @@ async fn send_udp(socket: Arc<UdpSocket>, target: SocketAddrV4, mut chan_receive
         };
 
         let encoded = bincode::serialize(&pkt).unwrap();
-        socket.send_to(&encoded, target).await.unwrap();
+
+        let lock = client_list.read().unwrap();
+
+        for client in lock.keys() {
+            let target = lock.get(client).unwrap();
+            for address in target {
+                let task = socket.send_to(&encoded, address);
+            }
+        }
+
+
+
     }
 }
 
-async fn recv_udp(socket: Arc<UdpSocket>, chan_sender: tokio::sync::mpsc::UnboundedSender::<Packet>) {
+async fn recv_udp(socket: Arc<UdpSocket>, chan_sender: tokio::sync::mpsc::UnboundedSender::<Packet>, client_list: Arc<RwLock<HashMap<Uuid, Vec<SocketAddr>>>>) {
     println!("Started [recv_udp task]");
     loop {
         let mut buf = [0; 1500];
-        let (len, _addr) = socket.recv_from(&mut buf).await.unwrap();
+        let (len, addr) = socket.recv_from(&mut buf).await.unwrap();
 
         let decoded: Packet = match bincode::deserialize(&buf[..len]) {
             Ok(result) => {
@@ -104,6 +125,19 @@ async fn recv_udp(socket: Arc<UdpSocket>, chan_sender: tokio::sync::mpsc::Unboun
                 continue
             }
         };
+
+
+        let mut cl = client_list.write().unwrap();
+
+        if let Some(client) = cl.get_mut(&decoded.uuid) {
+            if  !client.contains(&addr) {
+                client.push(addr);
+                println!("Added: IP: {} to existing client: {}.", addr, decoded.uuid);
+            }
+        } else {
+            cl.insert(decoded.uuid, vec!(addr) );
+            println!("Added new client: {} with IP: {}", decoded.uuid, addr);
+        }
 
         chan_sender.send(decoded).unwrap();
     }
@@ -126,6 +160,11 @@ struct SettingsFile {
 
 #[tokio::main]
 async fn main() {
+
+    let my_uuid = Uuid::new_v4();
+    let client_list: Arc<RwLock<HashMap<Uuid, Vec<SocketAddr>>>> = Arc::new(RwLock::new(HashMap::new()));
+
+
 
     let yaml = load_yaml!("cli.yaml");
     let matches = App::from(yaml).get_matches();
@@ -189,18 +228,22 @@ async fn main() {
         let soc_recv = soc_send.clone();
         let target = SocketAddrV4::new(settings.remote_addr, settings.remote_port);
         let rx = tx.subscribe();
+
+        let send_client_list = client_list.clone();
+        let recv_client_list = send_client_list.clone();
+
         tasks.push(task::spawn(async move {
-            send_udp(soc_send, target, rx).await
+            send_udp(soc_send, target, rx, send_client_list).await
         }));
 
         let tx = inbound_tx.clone();
         tasks.push(task::spawn(async move {
-            recv_udp(soc_recv, tx).await
+            recv_udp(soc_recv, tx, recv_client_list).await
         }));
     }
 
     tasks.push(task::spawn(async move {
-        read_tun(tun_reader, tx).await
+        read_tun(tun_reader, tx, my_uuid).await
     }));
 
     tasks.push(task::spawn(async move {
