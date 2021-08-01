@@ -86,7 +86,7 @@ async fn send_udp(socket: Arc<UdpSocket>, client_list: Arc<RwLock<HashMap<IpAddr
         let pkt: Packet = match chan_receiver.recv().await {
             Ok(pkt) => pkt,
             Err(e) => {
-                println!("send_udp task channel overrun. Dropping packets!: {}", e);
+                eprintln!("send_udp task channel overrun. Dropping packets!: {}", e);
                 continue
             }
         };
@@ -125,12 +125,12 @@ async fn send_udp(socket: Arc<UdpSocket>, client_list: Arc<RwLock<HashMap<IpAddr
                     targets.push(target.clone());
                 }
             } else {
-                println!("I don't know any destinations for: {}. Perhaps it has not been discovered yet?", tun_ip);
+                eprintln!("I don't know any destinations for: {}. Perhaps it has not been discovered yet?", tun_ip);
             }
         }
 
         for target in targets {
-            println!("Sending to: {}", target);
+            //println!("Sending to: {}", target);
             socket.send_to(&encoded, target).await.unwrap();
         }
 

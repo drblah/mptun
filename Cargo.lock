@@ -616,9 +616,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.6.1"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a38d31d7831c6ed7aad00aa4c12d9375fd225a6dd77da1d25b707346319a975"
+checksum = "4b7b349f11a7047e6d1276853e612d152f5e8a352c61917887cc2169e2366b4c"
 dependencies = [
  "autocfg",
  "bytes",
@@ -647,9 +647,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-tun"
-version = "0.3.12"
+version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b069390dad41402d7e14ac448e6971742930425cfe0c04b16d3cd7ce4feab9b"
+checksum = "0de0c23b1beaec05b09d6a6c54dbdf6e61dd7091a46acb476d1dfeaa9551c941"
 dependencies = [
  "futures",
  "libc",
