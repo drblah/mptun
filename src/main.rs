@@ -15,6 +15,8 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use etherparse::{SlicedPacket, InternetSlice};
 
+use std::time::Duration;
+use tokio::time;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 struct Packet {
@@ -149,7 +151,7 @@ async fn recv_udp(socket: Arc<UdpSocket>, chan_sender: tokio::sync::mpsc::Unboun
             },
             Err(err) => {
                 // If we receive garbage, simply throw it away and continue.
-                println!("{}", err);
+                println!("Unable do deserialize packet. Got error: {}", err);
                 continue
             }
         };
@@ -191,6 +193,32 @@ async fn recv_udp(socket: Arc<UdpSocket>, chan_sender: tokio::sync::mpsc::Unboun
     }
 }
 
+async fn keep_alive(socket: Arc<UdpSocket>, client_list: Arc<RwLock<HashMap<IpAddr, Vec<SocketAddr>>>>, interval: u64) {
+    let mut interval = time::interval(Duration::from_secs(interval));
+
+    loop {
+        interval.tick().await;
+
+        let mut hosts_to_ping: Vec<SocketAddr> = Vec::new();
+
+        {
+            let cl = client_list.read().unwrap();
+            for ip in cl.keys() {
+                for destinations in cl.get(ip) {
+                    for destination in destinations {
+                        hosts_to_ping.push(destination.clone());
+                    }
+                }
+            }
+        }
+
+        for destination in hosts_to_ping {
+            println!("Sending keep-alive packet to: {}", destination);
+            socket.send_to(&[0, 0], destination).await.unwrap();
+        }
+    }
+}
+
 #[derive(Deserialize, Debug)]
 struct SendDevice {
     udp_iface: String,
@@ -204,7 +232,9 @@ struct SettingsFile {
     send_devices: Vec<SendDevice>,
     remote_addr: Ipv4Addr,
     remote_port: u16,
-    remote_tun_addr: Option<Ipv4Addr>
+    remote_tun_addr: Option<Ipv4Addr>,
+    keep_alive: Option<bool>,
+    keep_alive_interval: Option<u64>
 }
 
 #[tokio::main]
@@ -285,10 +315,27 @@ async fn main() {
     for socket in sockets {
         let soc_send = socket.clone();
         let soc_recv = soc_send.clone();
+
         let rx = tx.subscribe();
 
         let send_client_list = client_list.clone();
         let recv_client_list = send_client_list.clone();
+
+
+        match settings.keep_alive {
+            Some(should_keep_alive) => {
+                if should_keep_alive {
+                    let keep_alive_soc = soc_recv.clone();
+                    let keep_alive_client_list = recv_client_list.clone();
+                    let interval = settings.keep_alive_interval.unwrap();
+
+                    tasks.push(task::spawn(async move {
+                        keep_alive(keep_alive_soc, keep_alive_client_list, interval).await
+                    }));
+                }
+            },
+            None => {}
+        }
 
         tasks.push(task::spawn(async move {
             send_udp(soc_send, send_client_list, rx).await
