@@ -311,27 +311,5 @@ async fn main() {
     for task in tasks {
         task.await.unwrap();
     }
-
-    /*
-    let sock = make_socket(settings.udp_iface.as_str(), settings.udp_listen_addr, settings.udp_listen_port);
-    let receiver = Arc::new(sock);
-    let sender = receiver.clone();
-
-    let mut handles: Vec<task::JoinHandle<_>> = Vec::new();
-
-    handles.push(tokio::spawn(async move {
-        tun_to_udp(sender, reader, settings.remote_addr, settings.remote_port).await
-    }));
-
-    handles.push(tokio::spawn(async move {
-        udp_to_tun(receiver, writer).await
-    }));
-
-
-    for h in handles {
-        h.await.unwrap();
-    }
-
-     */
     
 }
