@@ -2,6 +2,7 @@
     "tun_ip": "10.12.0.1",
     "remote_addr": "172.16.200.4",
     "remote_port": 10001,
+    "remote_tun_addr": "10.12.0.2",
     "send_devices":[
       {
         "udp_iface": "veth1",

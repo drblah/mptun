@@ -80,7 +80,7 @@ async fn send_tun(mut tun_sender: WriteHalf<tokio_tun::Tun>, mut chan_receiver: 
     }
 }
 
-async fn send_udp(socket: Arc<UdpSocket>, target: SocketAddrV4, mut chan_receiver: tokio::sync::broadcast::Receiver<Packet>) {
+async fn send_udp(socket: Arc<UdpSocket>, client_list: Arc<RwLock<HashMap<IpAddr, Vec<SocketAddr>>>>, mut chan_receiver: tokio::sync::broadcast::Receiver<Packet>) {
     println!("Started [send_udp task]");
     loop {
         let pkt: Packet = match chan_receiver.recv().await {
@@ -91,10 +91,48 @@ async fn send_udp(socket: Arc<UdpSocket>, target: SocketAddrV4, mut chan_receive
             }
         };
 
+        // Decode IP packet and extract destination TUN IP
+        let tun_ip = match SlicedPacket::from_ip(pkt.bytes.as_slice()) {
+            Err(value) => {
+                eprintln!("Error extracting senders TUN IP: {:?}", value);
+                continue;
+            },
+            Ok(value) => {
+                match value.ip {
+                    Some(InternetSlice::Ipv4(ipheader)) => {
+                        IpAddr::V4(ipheader.destination_addr())
+                    },
+                    Some(InternetSlice::Ipv6(_, _)) => {
+                        eprintln!("TODO: Handle receiving IPv6");
+                        continue
+                    }
+                    None => {continue}
+
+                }
+            }
+        };
+
+        //println!("Pkt should be sent to: {}", tun_ip);
+
         let encoded = bincode::serialize(&pkt).unwrap();
+        let mut targets: Vec<SocketAddr> = Vec::new();
 
-        socket.send_to(&encoded, target).await.unwrap();
+        {
+            let cl = client_list.read().unwrap();
 
+            if let Some(destination) = cl.get(&tun_ip) {
+                for target in destination {
+                    targets.push(target.clone());
+                }
+            } else {
+                println!("I don't know any destinations for: {}. Perhaps it has not been discovered yet?", tun_ip);
+            }
+        }
+
+        for target in targets {
+            println!("Sending to: {}", target);
+            socket.send_to(&encoded, target).await.unwrap();
+        }
 
     }
 }
@@ -165,7 +203,8 @@ struct SettingsFile {
     tun_ip: Ipv4Addr,
     send_devices: Vec<SendDevice>,
     remote_addr: Ipv4Addr,
-    remote_port: u16
+    remote_port: u16,
+    remote_tun_addr: Option<Ipv4Addr>
 }
 
 #[tokio::main]
@@ -190,6 +229,17 @@ async fn main() {
     ).unwrap();
 
     println!("Using settings: {:?}", settings);
+
+    // Insert pre-configured clients
+    match settings.remote_tun_addr {
+        Some(remote) => {
+            println!("Inserting pre-configured remote: {}", remote);
+            let mut cl = client_list.write().unwrap();
+            let socket = SocketAddr::new(IpAddr::V4(settings.remote_addr), settings.remote_port);
+            cl.insert(IpAddr::V4(remote), vec![socket]);
+        },
+        None => {}
+    }
 
     let tun = TunBuilder::new()
         .name("")
@@ -235,14 +285,13 @@ async fn main() {
     for socket in sockets {
         let soc_send = socket.clone();
         let soc_recv = soc_send.clone();
-        let target = SocketAddrV4::new(settings.remote_addr, settings.remote_port);
         let rx = tx.subscribe();
 
         let send_client_list = client_list.clone();
         let recv_client_list = send_client_list.clone();
 
         tasks.push(task::spawn(async move {
-            send_udp(soc_send, target, rx).await
+            send_udp(soc_send, send_client_list, rx).await
         }));
 
         let tx = inbound_tx.clone();
