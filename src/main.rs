@@ -18,6 +18,9 @@ use etherparse::{SlicedPacket, InternetSlice};
 use std::time::Duration;
 use tokio::time;
 
+mod multipathtunnel;
+mod settings;
+
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 struct Packet {
     seq: usize,
