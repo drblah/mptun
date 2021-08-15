@@ -15,12 +15,10 @@ use crate::settings::SettingsFile;
 use crate::tasks;
 use crate::packet::Packet;
 
-pub struct Multipathtunnel {
+struct Multipathtunnel {
     sockets: Vec<Arc<UdpSocket>>,
     client_list: Arc<RwLock<HashMap<IpAddr, Vec<SocketAddr>>>>
 }
-
-
 
 pub async fn run(settings: SettingsFile) {
 
