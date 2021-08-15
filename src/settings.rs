@@ -1,5 +1,5 @@
 use std::net::Ipv4Addr;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize};
 
 #[derive(Deserialize, Debug)]
 pub struct SendDevice {
