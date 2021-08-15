@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::time;
 use tokio::{net::UdpSocket};
 
-use crate::packet::Packet;
+use crate::messages::{Packet, Keepalive, Messages};
 
 pub async fn read_tun(mut tun_reader: ReadHalf<tokio_tun::Tun>, chan_sender: tokio::sync::broadcast::Sender<Packet>) {
     println!("Started [read_tun task]");
@@ -77,7 +77,7 @@ pub async fn send_udp(socket: Arc<UdpSocket>, client_list: Arc<RwLock<HashMap<Ip
 
         //println!("Pkt should be sent to: {}", tun_ip);
 
-        let encoded = bincode::serialize(&pkt).unwrap();
+        let encoded = bincode::serialize(&Messages::Packet(pkt)).unwrap();
         let mut targets: Vec<SocketAddr> = Vec::new();
 
         {
@@ -106,9 +106,15 @@ pub async fn recv_udp(socket: Arc<UdpSocket>, chan_sender: tokio::sync::mpsc::Un
         let mut buf = [0; 1500];
         let (len, addr) = socket.recv_from(&mut buf).await.unwrap();
 
-        let decoded: Packet = match bincode::deserialize(&buf[..len]) {
-            Ok(result) => {
-                result
+        let decoded: Packet = match bincode::deserialize::<Messages>(&buf[..len]) {
+            Ok(decoded) => {
+                match decoded {
+                    Messages::Packet(pkt) => pkt,
+                    Messages::Keepalive => {
+                        println!("Received keepalive msg.");
+                        continue
+                    }
+                }
             },
             Err(err) => {
                 // If we receive garbage, simply throw it away and continue.
@@ -175,7 +181,9 @@ pub async fn keep_alive(socket: Arc<UdpSocket>, client_list: Arc<RwLock<HashMap<
 
         for destination in hosts_to_ping {
             println!("Sending keep-alive packet to: {}", destination);
-            socket.send_to(&[0, 0], destination).await.unwrap();
+
+            let keepalive_msg = bincode::serialize(&Messages::Keepalive).unwrap();
+            socket.send_to(keepalive_msg.as_slice(), destination).await.unwrap();
         }
     }
 }

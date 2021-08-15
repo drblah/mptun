@@ -4,7 +4,7 @@ use serde_json;
 mod multipathtunnel;
 mod settings;
 mod tasks;
-mod packet;
+mod messages;
 
 #[tokio::main]
 async fn main() {

@@ -13,7 +13,7 @@ use std::net::UdpSocket as std_udp;
 
 use crate::settings::SettingsFile;
 use crate::tasks;
-use crate::packet::Packet;
+use crate::messages::Packet;
 
 struct Multipathtunnel {
     sockets: Vec<Arc<UdpSocket>>,
