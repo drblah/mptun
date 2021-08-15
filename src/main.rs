@@ -3,6 +3,8 @@ use serde_json;
 
 mod multipathtunnel;
 mod settings;
+mod tasks;
+mod packet;
 
 #[tokio::main]
 async fn main() {
