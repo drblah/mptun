@@ -105,7 +105,7 @@ async fn make_tunnel(settings: Arc<SettingsFile>) -> tokio_tun::Tun {
         .name("")
         .tap(false)
         .packet_info(false)
-        .mtu(1350)
+        .mtu(1424)
         .up()
         .address(settings.tun_ip)
         .broadcast(Ipv4Addr::BROADCAST)

@@ -15,7 +15,7 @@ pub async fn read_tun(mut tun_reader: ReadHalf<tokio_tun::Tun>, chan_sender: tok
     let mut seq: usize = 0;
 
     loop {
-        let mut buf = [0u8; 1400];
+        let mut buf = [0u8; 1500];
         let n = tun_reader.read(&mut buf).await.unwrap();
 
         let pkt = Packet{
