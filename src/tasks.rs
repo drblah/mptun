@@ -7,6 +7,7 @@ use etherparse::{SlicedPacket, InternetSlice};
 use std::time::Duration;
 use tokio::time;
 use tokio::{net::UdpSocket};
+use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 
 use crate::messages::{Packet, Keepalive, Messages};
 
@@ -76,8 +77,12 @@ pub async fn send_udp(socket: Arc<UdpSocket>, client_list: Arc<RwLock<HashMap<Ip
         };
 
         //println!("Pkt should be sent to: {}", tun_ip);
+        let compressed_pkt = Packet{
+            seq: pkt.seq,
+            bytes: compress_prepend_size(&pkt.bytes)
+        };
 
-        let encoded = bincode::serialize(&Messages::Packet(pkt)).unwrap();
+        let encoded = bincode::serialize(&Messages::Packet(compressed_pkt)).unwrap();
         let mut targets: Vec<SocketAddr> = Vec::new();
 
         {
@@ -109,7 +114,12 @@ pub async fn recv_udp(socket: Arc<UdpSocket>, chan_sender: tokio::sync::mpsc::Un
         let decoded: Packet = match bincode::deserialize::<Messages>(&buf[..len]) {
             Ok(decoded) => {
                 match decoded {
-                    Messages::Packet(pkt) => pkt,
+                    Messages::Packet(pkt) => {
+                        Packet{
+                            seq: pkt.seq,
+                            bytes: decompress_size_prepended(&pkt.bytes).unwrap()
+                        }
+                    },
                     Messages::Keepalive => {
                         println!("Received keepalive msg.");
                         continue
