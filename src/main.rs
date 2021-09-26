@@ -6,7 +6,7 @@ mod settings;
 mod tasks;
 mod messages;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     let yaml = load_yaml!("cli.yaml");
     let matches = App::from(yaml).get_matches();
