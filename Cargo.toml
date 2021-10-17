@@ -10,8 +10,7 @@ edition = "2018"
 debug = true
 
 [dependencies]
-tokio-tun = "0.3.11"
-#tokio-tun = {path = "external-dependencies/tokio-tun/"}
+tokio-tun = "0.3.16"
 tokio = { version = "1.6.0", features = ["full"] }
 serde = { version = "1.0.126", features = ["derive"] }
 serde_arrays = "0.1.0"
