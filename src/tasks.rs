@@ -11,12 +11,18 @@ use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 
 use crate::messages::{Packet, Keepalive, Messages};
 
+// This must always be large enough to:
+// 1. Receive a full IP packet from the tun
+// 2. Receive a full UDP datagram
+const RECV_BUFFER_SIZE: usize = 65535;
+
 pub async fn read_tun(mut tun_reader: ReadHalf<tokio_tun::Tun>, chan_sender: tokio::sync::broadcast::Sender<Packet>) {
     println!("Started [read_tun task]");
     let mut seq: usize = 0;
+    let mut buf = [0u8; RECV_BUFFER_SIZE];
 
     loop {
-        let mut buf = [0u8; 1500];
+
         let n = tun_reader.read(&mut buf).await.unwrap();
 
         let pkt = Packet{
@@ -107,8 +113,10 @@ pub async fn send_udp(socket: Arc<UdpSocket>, client_list: Arc<RwLock<HashMap<Ip
 
 pub async fn recv_udp(socket: Arc<UdpSocket>, chan_sender: tokio::sync::mpsc::UnboundedSender::<Packet>, client_list: Arc<RwLock<HashMap<IpAddr, Vec<SocketAddr>>>>) {
     println!("Started [recv_udp task]");
+    let mut buf = [0; RECV_BUFFER_SIZE];
+
     loop {
-        let mut buf = [0; 1500];
+
         let (len, addr) = socket.recv_from(&mut buf).await.unwrap();
 
         let decoded: Packet = match bincode::deserialize::<Messages>(&buf[..len]) {
