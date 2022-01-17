@@ -59,15 +59,16 @@ ip link set br-veth3 master mptun_bridge
 ip addr add 172.16.200.1/24 brd + dev mptun_bridge
 
 # Start interactive consoles for each namespace
-ip netns exec host1 \
-  konsole -p tabtitle='host1'&
+
+tmux \
+	new-session  "ip netns exec host1 bash" \; \
+	split-window "ip netns exec host2 bash" \; \
+	select-layout even-vertical
+
 P1=$!
 
-ip netns exec host2 \
-  konsole -p tabtitle='host2'&
-P2=$!
 
-wait $P1 $P2
+wait $P1
 
 ## Clean up the bridge and namespaces
 ip netns delete host1
